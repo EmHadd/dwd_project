@@ -28,19 +28,6 @@ for station in cur_station:
             doc['bis_datum'] = node['bis_datum']
             enriched_station.append(doc)
 
-# # -----------------
-# # Test data query
-# # -----------------
-# pprint.pprint(enriched_station[0])
-# geo_query = {'_id': '52.9335, 8.237'}
-# cur_geo = coll_geo.find(geo_query)
-# for c in cur_geo:
-#     for node in c['data']:
-#         print(node['types'])
-#         if node['types'] in [[u'route'], [u'street_address']]:
-#             pprint.pprint(node['formatted_address'])
-
-
 # Do not consider the boats on the open sea....
 cleaned_stations = [e for e in enriched_station if e['stationsnummer'] not in [954, 1228]]
 # TODO: Remove all station that are situated over X meter
