@@ -1,3 +1,4 @@
+# coding=utf-8
 import datetime
 from pymongo import MongoClient
 import pandas as pd
@@ -6,40 +7,66 @@ mongo_url = 'mongodb://core3:654321@localhost:27017'
 
 
 class WeatherReport(object):
-
     def __init__(self):
         self._conn = None
 
+    # establish a connection to the database through mogo_url
     @property
     def connection(self):
         if self._conn is None:
             self._conn = MongoClient(mongo_url)
         return self._conn['dwd']
 
+    # retrieve station collection  from dwd
     @property
     def station_collection(self):
         return self.connection['station']
 
+    # retrieve metric collection from dwd
     @property
     def metric_collection(self):
         return self.connection['metrik']
 
+    # retrieve geo collection from dwd
     @property
     def geo_collection(self):
         return self.connection['geo']
 
+    def create_metric_list(self,metric,metricList):
+        """
+
+        :param metric:  a string that indicates the name of the metric
+        :param metricList: list of metrics (retrieved by get_observed_metric function)
+        :return: list of boolean that indicates whether the metric exists in the metricList or not
+        """
+        metricCol = []
+        for i in range(0,(len(metricList))):
+            if metric in metricList[i]:
+                metricCol.append(True)
+            else:
+                metricCol.append(False)
+
+        return metricCol
+
     def get_station(self, start, end):
+        """
+
+        :param start: start of time period
+        :param end: end of time period
+        :return: list of active stations in this time, inclusding a key match for the geo collection
+        """
         enriched_station = []
         _coll = self.station_collection
         cur_agg = _coll.aggregate([{'$match': {}},
-                                 {'$unwind': '$_data'},
-                                 {'$match': {'_data.von_datum': {'$lte': start},
-                                             '_data.bis_datum': {'$gt': end + datetime.timedelta(days=1)}}}])
-        #TODO: Check if open end station are correct : bis_date = None
+                                   {'$unwind': '$_data'},
+                                   {'$match': {'_data.von_datum': {'$lte': start},
+                                               '_data.bis_datum': {'$gt': end + datetime.timedelta(days=1)}}}])
+        # TODO: Check if open end station are correct : bis_date = None
+        # for each of the stations we need to construct a geo_key that allows matching with the geo collection
         for station in cur_agg:
             doc = {}
-            #for node in station['_data']:
-                #if node['bis_datum'] is None:
+            # for node in station['_data']:
+            # if node['bis_datum'] is None:
             node = station['_data']
             geo_key = str(node['geogr_breite']) + ', ' + str(node['geogr_laenge'])
             doc['stationsnummer'] = station['_id']
@@ -116,24 +143,29 @@ class WeatherReport(object):
             summary.append(doc)
 
         summary = pd.DataFrame(summary)
+        #split the metrics column into three columns for each metric
+        summary['sonne_metric'] = self.create_metric_list('sonne',summary['metrics'])
+        summary['regen_metric'] = self.create_metric_list('regen', summary['metrics'])
+        summary['luft_metric'] = self.create_metric_list('luft', summary['metrics'])
 
         return summary
 
 
-       # pass
 
-#     def get_metric(self, station, start, end):
-#         """
-#         retrieves the metrics
-#
-#         :param station:
-#         :param start:
-#         :param end:
-#         :return:
-#         """
-#         pass
+        # pass
 
-    def retrieve(self, start, end):#, zip=[], rain=True, sun=True, air=True):
+    #     def get_metric(self, station, start, end):
+    #         """
+    #         retrieves the metrics
+    #
+    #         :param station:
+    #         :param start:
+    #         :param end:
+    #         :return:
+    #         """
+    #         pass
+
+    def retrieve(self, start, end):  # , zip=[], rain=True, sun=True, air=True):
         # Get stations with geo-information
         station_df = self.get_station_geo(start, end)
 
@@ -151,6 +183,5 @@ stations = wr.retrieve(start=datetime.datetime(2016, 1, 1),
                        end=datetime.datetime(2016, 2, 1))
 
 print(stations)
-stations.to_csv("/tmp/WeatherApp_results___V01.csv",
-                sep='\t',
-                encoding='utf-8')
+stations.to_csv("/tmp/WeatherApp_results___V01.csv", sep='\t',encoding='utf-8')
+
