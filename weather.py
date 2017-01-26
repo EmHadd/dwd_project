@@ -2,11 +2,14 @@
 import datetime
 from pymongo import MongoClient
 import pandas as pd
+import numpy as np
+
+import core.queue.job
 
 mongo_url = 'mongodb://core3:654321@localhost:27017'
 
 
-class WeatherReport(object):
+class WeatherReport(core.queue.job.Job):
     def __init__(self):
         self._conn = None
 
@@ -164,15 +167,65 @@ class WeatherReport(object):
     #         :return:
     #         """
     #         pass
+    def get_metric(self,metric_list,start, end,stationnummer):
 
-    def retrieve(self, start, end):  # , zip=[], rain=True, sun=True, air=True):
+        proj = {'_id': 0, '_job': 0, '_metric': 0, '_src': 0, }
+
+        if 'regen' in metric_list:
+            query = {'stations_id':stationnummer,'_metric': 'regen', 'mess_datum': {'$gte': start, '$lt': end}}
+            cur = self.metric_collection.find(query, proj)
+            df_regen = pd.DataFrame(list(cur))
+            df_regen.rename(columns={'qualitaets_niveau': 'qualitaets_niveau_regen'}, inplace=True)
+            df_final = df_regen
+            df_final.head()
+
+        if 'sonne' in metric_list:
+            sonne_id_list = self.metric_collection.distinct(u'_id',
+                                            {'_metric': 'sonne', 'mess_datum': {'$gte': start, '$lt': end}})
+            query = {u'_id': {'$in': sonne_id_list}}
+            cur = self.metric_collection.find(query, proj)
+            df_sonne = pd.DataFrame(list(cur))
+            df_sonne.rename(columns={'struktur_version': 'struktur_version_sonne'}, inplace=True)
+            df_sonne.rename(columns={'qualitaets_niveau': 'qualitaets_niveau_sonne'}, inplace=True)
+            df_sonne.head()
+
+            if 'regen' in metric_list:
+                df_final = pd.merge(df_sonne, df_final, on=['stations_id', 'mess_datum'], how='inner',
+                                    suffixes=['_sonne', '_regen'])
+            else:
+                df_final = df_sonne
+                #df_final.insert(0,'qualitaets_niveau_regen',np.nan)
+
+
+        if 'luft' in metric_list:
+            luft_id_list = self.metric_collection.distinct(u'_id',
+                                           {'_metric': 'luft', 'mess_datum': {'$gte': start, '$lt': end}})
+            query = {u'_id': {'$in': luft_id_list}}
+            cur = self.metric_collection.find(query, proj)
+            df_luft = pd.DataFrame(list(cur))
+            df_luft.rename(columns={'struktur_version': 'struktur_version_luft'}, inplace=True)
+            df_luft.rename(columns={'qualitaets_niveau': 'qualitaets_niveau_luft'}, inplace=True)
+            df_luft.head()
+
+            if ('sonne' in metric_list or 'regen' in metric_list):
+                df_final = pd.merge(df_luft, df_final, on=['stations_id', 'mess_datum'], how='inner',
+                                    suffixes=['_luft', ''])
+            else:
+                df_final = df_luft
+
+        df_final.head()
+        return df_final
+
+
+
+    def retrieve(self, start, end):
         # Get stations with geo-information
         station_df = self.get_station_geo(start, end)
-
-        # TODO: Add the station filter-list here [zip codes], [Bundesländer]
         station_list = list(set([e for e in station_df.stationsnummer.unique()]))
         metrics = self.get_observed_metric(station_list, start, end)
         df = station_df.merge(metrics, how='left', on=['stationsnummer'])
+        df.rename(columns={'stationsnummer': 'station_id'}, inplace=True)
+
 
         # TODO: Add the metrics filter-list here [....]
         return df
