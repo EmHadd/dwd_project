@@ -9,7 +9,10 @@ import core.queue.job
 mongo_url = 'mongodb://core3:654321@localhost:27017'
 
 
-class WeatherReport(core.queue.job.Job):
+
+class WeatherReport():
+
+
     def __init__(self):
         self._conn = None
 
@@ -154,87 +157,129 @@ class WeatherReport(core.queue.job.Job):
         return summary
 
 
-
-        # pass
-
-    #     def get_metric(self, station, start, end):
-    #         """
-    #         retrieves the metrics
-    #
-    #         :param station:
-    #         :param start:
-    #         :param end:
-    #         :return:
-    #         """
-    #         pass
-    def get_metric(self,metric_list,start, end,stationnummer):
-
+    def retrieveMetrics(self,join_how,start,end):
+        #define metrics columns
+        insert_columns_regen = ['niederschlag_gefallen_ind', 'niederschlagsform', 'niederschlagshoehe',
+                                'qualitaets_niveau_regen']
+        insert_columns_sonne = ['qualitaets_niveau_sonne', 'struktur_version_sonne', 'stundensumme_sonnenschein']
+        insert_columns_luft = ['lufttemperatur', 'qualitaets_niveau_luft', 'rel_feuchte', 'struktur_version_luft']
+        metric_list = ['luft', 'sonne', 'regen']
+        join_how = 'outer'
         proj = {'_id': 0, '_job': 0, '_metric': 0, '_src': 0, }
-
+        #if metric list contains regen, retrieve regen data from the mongo dwd
         if 'regen' in metric_list:
-            query = {'stations_id':stationnummer,'_metric': 'regen', 'mess_datum': {'$gte': start, '$lt': end}}
+            regen_id_list = self.metric_collection.distinct(u'_id',
+                                            {'_metric': 'regen', 'mess_datum': {'$gte': start, '$lt': end}})
+            query = {u'_id': {'$in': regen_id_list}}
             cur = self.metric_collection.find(query, proj)
             df_regen = pd.DataFrame(list(cur))
-            df_regen.rename(columns={'qualitaets_niveau': 'qualitaets_niveau_regen'}, inplace=True)
-            df_final = df_regen
-            df_final.head()
+            #if the retrieved cursor not empty, amend some columns names
+            if not df_regen.empty:
+                df_regen.rename(columns={'qualitaets_niveau': 'qualitaets_niveau_regen'}, inplace=True)
+                df_regen = df_regen[['stations_id', 'mess_datum'] + insert_columns_regen]
+                df_regen.head()
 
+        else: #if metric list doesn't contain regen, create an empty data frame
+
+            df_regen = pd.DataFrame()
         if 'sonne' in metric_list:
             sonne_id_list = self.metric_collection.distinct(u'_id',
                                             {'_metric': 'sonne', 'mess_datum': {'$gte': start, '$lt': end}})
             query = {u'_id': {'$in': sonne_id_list}}
             cur = self.metric_collection.find(query, proj)
             df_sonne = pd.DataFrame(list(cur))
-            df_sonne.rename(columns={'struktur_version': 'struktur_version_sonne'}, inplace=True)
-            df_sonne.rename(columns={'qualitaets_niveau': 'qualitaets_niveau_sonne'}, inplace=True)
-            df_sonne.head()
 
-            if 'regen' in metric_list:
-                df_final = pd.merge(df_sonne, df_final, on=['stations_id', 'mess_datum'], how='inner',
-                                    suffixes=['_sonne', '_regen'])
-            else:
-                df_final = df_sonne
-                #df_final.insert(0,'qualitaets_niveau_regen',np.nan)
+            if not df_sonne.empty:
+                df_sonne.rename(columns={'struktur_version': 'struktur_version_sonne'}, inplace=True)
+                df_sonne.rename(columns={'qualitaets_niveau': 'qualitaets_niveau_sonne'}, inplace=True)
+                df_sonne = df_sonne[['stations_id', 'mess_datum'] + insert_columns_sonne]
+                df_sonne.head()
 
+        else:
 
+            df_sonne = pd.DataFrame()
         if 'luft' in metric_list:
             luft_id_list = self.metric_collection.distinct(u'_id',
                                            {'_metric': 'luft', 'mess_datum': {'$gte': start, '$lt': end}})
             query = {u'_id': {'$in': luft_id_list}}
             cur = self.metric_collection.find(query, proj)
             df_luft = pd.DataFrame(list(cur))
-            df_luft.rename(columns={'struktur_version': 'struktur_version_luft'}, inplace=True)
-            df_luft.rename(columns={'qualitaets_niveau': 'qualitaets_niveau_luft'}, inplace=True)
-            df_luft.head()
 
-            if ('sonne' in metric_list or 'regen' in metric_list):
-                df_final = pd.merge(df_luft, df_final, on=['stations_id', 'mess_datum'], how='inner',
-                                    suffixes=['_luft', ''])
-            else:
-                df_final = df_luft
+            if not df_luft.empty:
+                df_luft.rename(columns={'struktur_version': 'struktur_version_luft'}, inplace=True)
+                df_luft.rename(columns={'qualitaets_niveau': 'qualitaets_niveau_luft'}, inplace=True)
+                df_luft = df_luft[['stations_id', 'mess_datum'] + insert_columns_luft]
+                df_luft.head()
 
-        df_final.head()
+        else:
+
+            df_luft = pd.DataFrame()
+
+        df_list = [df_regen, df_sonne, df_luft]
+
+        df_list_not_empty = []
+
+        for df in df_list:
+            if not df.empty:
+                df_list_not_empty = df_list_not_empty[:] + [df]
+
+        if len(df_list_not_empty) == 0:
+            df_final = pd.DataFrame()
+        elif len(df_list_not_empty) == 1:
+            df_final = df_list_not_empty[0]
+        elif len(df_list_not_empty) >= 2:
+
+            df_final = pd.merge(df_list_not_empty[0], df_list_not_empty[1], on=['stations_id', 'mess_datum'],
+                                how=join_how, suffixes=['', ''])
+
+        if len(df_list_not_empty) == 3:
+            df_final = pd.merge(df_final, df_list_not_empty[2], on=['stations_id', 'mess_datum'], how=join_how,
+                                suffixes=['', ''])
+
+        if 'sonne' not in metric_list:
+            for col in insert_columns_sonne:
+                df_final[col] = np.nan
+
+        if 'luft' not in metric_list:
+            for col in insert_columns_luft:
+                df_final[col] = np.nan
+
+        if 'regen' not in metric_list:
+            for col in insert_columns_regen:
+                df_final[col] = np.nan
+
+        df_final = df_final[
+            ['stations_id', 'mess_datum'] + insert_columns_sonne + insert_columns_regen + insert_columns_luft]
+        df_final.rename(columns={'stations_id': 'stationsnummer'}, inplace=True)
         return df_final
 
 
-
-    def retrieve(self, start, end):
+    def retrieve(self, start, end):  # , zip=[], rain=True, sun=True, air=True):
         # Get stations with geo-information
         station_df = self.get_station_geo(start, end)
         station_list = list(set([e for e in station_df.stationsnummer.unique()]))
+        #get type of mesured metric
         metrics = self.get_observed_metric(station_list, start, end)
+        #merge stations info with measured metrics
         df = station_df.merge(metrics, how='left', on=['stationsnummer'])
-        df.rename(columns={'stationsnummer': 'station_id'}, inplace=True)
+        #retrieve measured metrics for each station in the given time
+        df_final = self.retrieveMetrics("outer",start,end)
+        #final merge of the stations info with the measured metrics... this outcome is passed for data aggregation
+        finDf = df.merge(df_final, how='left', on=['stationsnummer'])
 
 
-        # TODO: Add the metrics filter-list here [....]
-        return df
+        return finDf
 
 
 wr = WeatherReport()
-stations = wr.retrieve(start=datetime.datetime(2016, 1, 1),
-                       end=datetime.datetime(2016, 2, 1))
+stations = wr.retrieve(start=datetime.datetime(2016, 1, 1), end=datetime.datetime(2016, 1, 10))
 
-print(stations)
-stations.to_csv("/tmp/WeatherApp_results___V01.csv", sep='\t',encoding='utf-8')
+#print(stations.shape)
+#print(stations.head())
+stations.to_csv("/media/sf_Haddie/Documents/python/WeatherApp_allResults___V01.csv", sep='\t',encoding='utf-8')
+#fn = wr.retrieveMetrics( 'outer',start=datetime.datetime(2016, 1, 1),
+#                       end=datetime.datetime(2016, 1, 10))
+#print(fn.head())
+#fn.to_csv("/media/sf_Haddie/Documents/python/metrics_results___V01.csv", sep='\t',encoding='utf-8')
+
 
